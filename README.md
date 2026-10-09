@@ -42,3 +42,19 @@ Test the connection with:
 ```console
 python -m sandbox llm
 ```
+
+Design Goal
+
+The goal of my agent is to control an army of footmen, archers, and cavalry by giving each unit a role that supports the rest of the army. Footmen are intended to form the frontline and support nearby allied footmen. Archers are designed to attack enemies from a distance while avoiding dangerous melee units. Cavalry are intended to move quickly, use their charge bonus, and pressure vulnerable enemy archers. When enemies are not visible, units move toward the center of the map to help the army find the opposing team.
+
+Design Reflection
+
+My design uses a scoring system to choose targets and movement paths. The target-selection system considers distance, enemy health, and unit type. The movement system evaluates legal paths and rewards positions that help each unit perform its role. For example, footmen receive a bonus for staying near allied footmen, cavalry receive a bonus for moving far enough to charge, and archers prefer positions that keep enemies within shooting range while avoiding nearby melee threats.
+
+Testing showed that the agent can perform well in some matches, but its performance is inconsistent. In five test seeds, the scores were 70.94, 0.00, 77.97, 0.00, and 86.41, resulting in an average score of 47.06. The zero scores indicate that the current strategy has important weaknesses that need further investigation. The agent may not respond effectively to every map layout or enemy strategy, and its units do not explicitly coordinate their decisions with one another. My next step is to investigate the failed matches, improve how units choose their positions and targets, and test whether those changes make the results more consistent across different seeds.
+
+AI-Use Disclosure and Reflection
+
+I used ChatGPT as a programming assistant to help develop and review the agent's target-selection and movement strategies. The assistance included discussing how different unit types could use their strengths, how to evaluate legal movement paths, and how to organize the agent's decision-making code. I reviewed the suggested code and used the sandbox's match results to evaluate its performance.
+
+Using AI helped me explore strategies and identify possible improvements more quickly, but it did not guarantee that the agent would perform well in every match. The inconsistent test results showed me that code that appears reasonable can still have weaknesses when tested in a game environment. I learned that evaluating an agent across multiple seeds is important, and that failed matches should be investigated rather than relying only on the best scores. I will continue using test results to guide revisions and make sure I understand the behavior of the code I submit.

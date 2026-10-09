@@ -1,80 +1,197 @@
-"""A working Crane starter agent.
+"""Season 3 Crane Reach army agent.
 
-Each unit runs a separate instance of this class. This starter walks forward until it sees an
-enemy, then takes one legal step toward the nearest visible enemy and names it. Start at the
-``TODO(you)`` comments.
-Read ``environment.md`` beside this file for the rules, helpers, and first improvement. Prepare
-episode state in ``reset``. The constructor takes no arguments.
+Footmen hold the frontline, archers attack from range,
+and cavalry move quickly to attack vulnerable enemies.
 """
 
-from sandbox.crane import action, me, tile, visible
+from sandbox.crane import action, me, paths, tile, units, visible
 from sandbox.observation_types import AxialPosition, SkirmishAction, SkirmishObservation
 
 
 class Agent:
-    """Marches toward the enemy side, then steps toward the nearest visible enemy."""
+    """Uses different combat strategies for each unit type."""
 
     def reset(self, seed, observation) -> None:
-        # Called once before each match. The opening observation is available here for
-        # precomputation outside the decision clock. This starter stores no state.
+        # This agent makes decisions from the current observation.
+        # It does not need to save anything between turns.
         pass
 
     def act(self, observation: SkirmishObservation) -> SkirmishAction:
-        # The enemies this unit can see.
+        # Find the enemies and allies this unit can currently see.
+        enemies = visible.enemies(observation)
+        allies = visible.allies(observation)
+
+        # Read this unit's type and current position.
+        unit_type = me.unit_type(observation)
+        here = me.position(observation)
+
+        # If no enemies are visible, move toward the center.
+        if not enemies:
+            center = tile.at_center(observation)
+            path_id = self._step_toward(
+                observation, center, allies, unit_type
+            )
+
+            if path_id == 0:
+                return action.stay()
+
+            return action.move(path_id)
+
+        # Choose a target according to this unit's role.
+        target = self._choose_target(here, enemies, unit_type)
+
+        # Find the best legal route toward the target.
+        path_id = self._step_toward(
+            observation, target["position"], allies, unit_type
+        )
+
+        # Name the target so the game tries to attack it after moving.
+        if path_id == 0:
+            return action.stay(target["unit_id"], observation)
+
+        return action.move(
+            path_id, target["unit_id"], observation
+        )
+
+    def _choose_target(self, here, enemies, unit_type):
+        """Choose an enemy based on distance, health, and role."""
+
+        best_target = enemies[0]
+        best_score = 100000
+
+        for enemy in enemies:
+            distance = tile.distance(here, enemy["position"])
+
+            # Nearby enemies are usually easier to attack.
+            score = distance * 5
+
+            # Prefer enemies with less health so the army can defeat them.
+            score = score + enemy["hit_points"] * 1.5
+
+            # Give extra priority to enemies that can be defeated soon.
+            if enemy["hit_points"] <= 3:
+                score = score - 8
+
+            # Cavalry try to pressure enemy archers.
+            if unit_type == "cavalry":
+                if enemy["type"] == "archer":
+                    score = score - 8
+
+            # Archers prefer vulnerable enemy units.
+            if unit_type == "archer":
+                if enemy["type"] == "archer":
+                    score = score - 4
+
+            # Footmen help deal with nearby frontline threats.
+            if unit_type == "footman":
+                if enemy["type"] == "cavalry":
+                    score = score - 5
+
+            if score < best_score:
+                best_score = score
+                best_target = enemy
+
+        return best_target
+
+    def _step_toward(
+        self,
+        observation: SkirmishObservation,
+        goal: AxialPosition,
+        allies,
+        unit_type: str
+    ) -> int:
+        """Choose the legal path that best supports this unit's role."""
+
+        here = me.position(observation)
         enemies = visible.enemies(observation)
 
-        if not enemies:
-            # At the beginning of a default skirmish match, units sit apart and see no enemies.
-            # me.direction is the digit toward the enemy side, so this unit heads that way.
-            forward = me.direction(observation)
+        # Start with staying in place as a valid choice.
+        best_path = 0
+        best_score = -100000
 
-            # legal_steps lists the single steps allowed by the mask. Checking membership keeps
-            # this order legal when a wall, ally, or enemy blocks the way.
-            if forward in action.legal_steps(observation):
-                return action.move(forward)
+        # Consider every legal path, including multi-step paths.
+        for path_id in action.legal_paths(observation):
+            end = tile.at_path_end(here, path_id)
+            distance = tile.distance(end, goal)
 
-            # TODO(you): this unit stands still when something blocks the way.
-            # It may still attack, but can you choose a better response?
-            return action.stay()
+            # Moving closer is useful for footmen and cavalry.
+            score = -distance * 5
 
-        # TODO(you): walking toward the nearest enemy is the entire strategy, and it is weak.
-        # An archer should shoot and back away, cavalry should swing wide for a flank, and a
-        # footman should hold the line beside an ally. What should each of your units do?
+            # Count the directions in this path.
+            directions = paths.decode(path_id)
 
-        # This unit's current {"q": ..., "r": ...} position.
-        here = me.position(observation)
+            # Small preference for shorter routes when scores are similar.
+            score = score - len(directions) * 0.1
 
-        # The closest enemy in sight. min returns the enemy dictionary, not the distance.
-        nearest = min(enemies, key=lambda enemy: tile.distance(here, enemy["position"]))
+            # Footmen benefit from standing beside allied footmen.
+            if unit_type == "footman":
+                for ally in allies:
+                    if ally["type"] == "footman":
+                        ally_distance = tile.distance(
+                            end, ally["position"]
+                        )
 
-        # The step that gets closest to the enemy, or 0 when no step gets closer.
-        step = self._step_toward(observation, nearest["position"])
+                        if ally_distance == 1:
+                            score = score + 4
 
-        # Naming a target makes the strike prefer that enemy. Any visible enemy can be named,
-        # so both orders below are legal.
-        if step == 0:
-            return action.stay(nearest["unit_id"], observation)
-        return action.move(step, nearest["unit_id"], observation)
+            # Cavalry benefit from moving at least three hexes
+            # before their attack to activate the charge bonus.
+            if unit_type == "cavalry":
+                if tile.distance(here, end) >= 3:
+                    score = score + 8
 
-    def _step_toward(self, observation: SkirmishObservation, goal: AxialPosition) -> int:
-        """Return the single step that most closes the gap to goal, or 0 when none does."""
-        # TODO(you): only single steps are tried here. A path can contain four steps, and cavalry
-        # has four movement points, so most of that speed goes to waste.
-        here = me.position(observation)
+                # Cavalry should favor attacking archers.
+                for enemy in enemies:
+                    if enemy["type"] == "archer":
+                        enemy_distance = tile.distance(
+                            end, enemy["position"]
+                        )
 
-        # Standing still is path id 0. A step must reduce the distance to be worth taking.
-        best_step = 0
-        best_distance = tile.distance(here, goal)
+                        if enemy_distance == 1:
+                            score = score + 5
 
-        for step in action.legal_steps(observation):
-            # at_path_end gives the landing tile, so this is the distance after the step.
-            step_distance = tile.distance(tile.at_path_end(here, step), goal)
+            # Archers want to remain within shooting range.
+            if unit_type == "archer":
+                attack_range = units.STATS["archer"].attack_range
 
-            # Remember this step if it is the best one so far.
-            if step_distance < best_distance:
-                best_step, best_distance = step, step_distance
+                for enemy in enemies:
+                    enemy_distance = tile.distance(
+                        end, enemy["position"]
+                    )
 
-        return best_step
+                    # Prefer positions from which the archer can shoot.
+                    if enemy_distance <= attack_range:
+                        score = score + 12
+
+                        # Prefer some distance from nearby enemies.
+                        if enemy_distance >= 3:
+                            score = score + 3
+
+                    # Avoid ending adjacent to melee enemies.
+                    if enemy["type"] == "footman":
+                        if enemy_distance <= 1:
+                            score = score - 18
+
+                    if enemy["type"] == "cavalry":
+                        if enemy_distance <= 2:
+                            score = score - 22
+
+            # Prefer paths that finish within attack range of an enemy.
+            for enemy in enemies:
+                enemy_distance = tile.distance(
+                    end, enemy["position"]
+                )
+
+                if enemy_distance <= units.STATS[unit_type].attack_range:
+                    score = score + 10
+
+            # Prefer this route if its score is better.
+            if score > best_score:
+                best_score = score
+                best_path = path_id
+
+        return best_path
+
 
     # Optional: a reinforcement-learning hook called after every step with that step's
     # transition. Its time counts against the timing and episode budget. The order argument is
